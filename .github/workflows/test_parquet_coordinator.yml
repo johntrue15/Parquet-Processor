@@ -20,8 +20,103 @@ on:
         type: string
 
 jobs:
-  coordinate:
+  test-run:
     runs-on: ubuntu-latest
+    outputs:
+      test_success: ${{ steps.evaluate_test.outputs.success }}
+      processing_time: ${{ steps.evaluate_test.outputs.avg_time }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Launch Test Workflow
+        id: test_workflow
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            console.log('Launching test workflow...');
+            
+            const testResponse = await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'test_parquet_processor.yml',
+              ref: context.ref,
+              inputs: {
+                start_index: '0',
+                total_processed: '0',
+                batch_size: '${{ inputs.batch_size }}',
+                max_records: '10',  // Process 10 records as test
+                segment_name: 'test-run'
+              }
+            });
+            
+            console.log('Test workflow launched');
+            
+      - name: Wait for Test Workflow
+        run: |
+          # Wait up to 10 minutes for test workflow to complete
+          for i in {1..60}; do
+            sleep 10
+            # Check for test artifacts
+            if ls data/processed_parquet/test-run/* &> /dev/null; then
+              echo "Test artifacts found"
+              break
+            fi
+            echo "Waiting for test workflow... ($i/60)"
+          done
+      
+      - name: Evaluate Test Results
+        id: evaluate_test
+        run: |
+          python -c "
+          import pandas as pd
+          import glob
+          import os
+          
+          success = False
+          avg_time = 0
+          
+          try:
+              test_files = glob.glob('data/processed_parquet/test-run/*/*.parquet')
+              if test_files:
+                  df = pd.read_parquet(test_files[0])
+                  records = len(df)
+                  avg_time = df.processing_time.mean()
+                  errors = df['error'].notna().sum()
+                  
+                  print(f'Test Results:')
+                  print(f'Records processed: {records}')
+                  print(f'Average processing time: {avg_time:.2f}s')
+                  print(f'Records with errors: {errors}')
+                  
+                  # Consider test successful if:
+                  # 1. At least 8 records processed (out of 10)
+                  # 2. Average processing time < 30 seconds
+                  # 3. Error rate < 20%
+                  success = (records >= 8 and 
+                           avg_time < 30 and 
+                           errors/records < 0.2)
+                  
+              print(f'Test evaluation: {"SUCCESS" if success else "FAILED"}')
+              
+              # Set outputs for next job
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write(f'success={str(success).lower()}\n')
+                  f.write(f'avg_time={avg_time}\n')
+                  
+          except Exception as e:
+              print(f'Error evaluating test: {e}')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('success=false\n')
+                  f.write('avg_time=0\n')
+          "
+
+  coordinate:
+    needs: test-run
+    if: needs.test-run.outputs.test_success == 'true'
+    runs-on: ubuntu-latest
+    
     steps:
       - uses: actions/checkout@v4
       
@@ -33,6 +128,11 @@ jobs:
           
           total = int('${{ inputs.total_records }}')
           segment = int('${{ inputs.segment_size }}')
+          avg_time = float('${{ needs.test-run.outputs.processing_time }}')
+          
+          # Adjust segment size based on processing time if needed
+          if avg_time > 15:  # If average record takes >15s
+              segment = min(segment, 5000)  # Reduce segment size
           
           segments = []
           for i in range(0, total, segment):
@@ -49,6 +149,8 @@ jobs:
                   f.write(f'{s[\"start\"]},{s[\"end\"]},{s[\"name\"]}\n')
           
           print(f'Found {len(segments)} segments')
+          print(f'Average processing time per record: {avg_time:.2f}s')
+          print(f'Adjusted segment size: {segment}')
           "
           
       - name: Trigger Processing Workflows
