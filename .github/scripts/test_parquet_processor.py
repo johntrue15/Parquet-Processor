@@ -47,6 +47,8 @@ def setup_driver():
     chrome_options.add_argument('--disable-extensions')
     chrome_options.add_argument('--disable-javascript')  # Disable JavaScript completely
     chrome_options.add_argument('--blink-settings=imagesEnabled=false')  # Disable images at browser level
+    chrome_options.add_argument('--disk-cache-size=0')  # Disable disk cache
+    chrome_options.add_argument('--dns-prefetch-disable')  # Disable DNS prefetch
     
     # Add more aggressive settings to stop loading
     chrome_options.add_experimental_option("prefs", {
@@ -55,20 +57,22 @@ def setup_driver():
         "profile.managed_default_content_settings.plugins": 2,
         "profile.managed_default_content_settings.mixed_script": 2,
         "profile.managed_default_content_settings.media_stream": 2,
-        "profile.managed_default_content_settings.javascript": 2,  # Disable JS
-        "profile.managed_default_content_settings.cookies": 2,  # Disable cookies
-        "profile.managed_default_content_settings.popups": 2,  # Disable popups
+        "profile.managed_default_content_settings.javascript": 2,
+        "profile.managed_default_content_settings.cookies": 2,
+        "profile.managed_default_content_settings.popups": 2,
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
-        "safebrowsing.enabled": False
+        "safebrowsing.enabled": False,
+        "network.http.connection-timeout": 5,  # 5 second connection timeout
+        "network.http.response-timeout": 5     # 5 second response timeout
     })
     
     chrome_options.binary_location = '/usr/bin/google-chrome'
     
     driver = webdriver.Chrome(options=chrome_options)
-    driver.set_page_load_timeout(15)    # Further reduced timeout
-    driver.set_script_timeout(15)       # Further reduced timeout
-    driver.implicitly_wait(5)           # Further reduced timeout
+    driver.set_page_load_timeout(5)     # Reduced from 15 to 5 seconds
+    driver.set_script_timeout(5)        # Reduced from 15 to 5 seconds
+    driver.implicitly_wait(2)           # Reduced from 5 to 2 seconds
     
     return driver
 
@@ -267,8 +271,8 @@ def process_url_batch(urls, output_dir, logger, start_index, total_processed, ma
     processed_count = 0
     error_count = 0
     skipped_records = []
-    retry_count = 3
-    record_timeout = 120  # 2 minutes timeout per record
+    retry_count = 2  # Reduced from 3 to 2 retries
+    record_timeout = 10  # Reduced from 120 to 10 seconds timeout per record
     
     # Calculate the correct start and end indices
     end_index = min(start_index + max_records, len(urls))
@@ -304,6 +308,7 @@ def process_url_batch(urls, output_dir, logger, start_index, total_processed, ma
                         logger.warning(f"Data extracted with error: {page_data['error']}")
                         error_count += 1
                         attempts += 1
+                        time.sleep(1)  # Reduced from 5s to 1s wait between retries
                     else:
                         success = True
                         logger.info(f"Successfully processed {url} (record {current_index})")
@@ -324,7 +329,7 @@ def process_url_batch(urls, output_dir, logger, start_index, total_processed, ma
                     
                     if attempts < retry_count:
                         logger.info(f"Retrying {url} after error...")
-                        time.sleep(5)
+                        time.sleep(1)  # Reduced from 5s to 1s wait
                 
                 # Check timeout outside the try block
                 if (time.time() - start_time) >= record_timeout:
@@ -340,7 +345,7 @@ def process_url_batch(urls, output_dir, logger, start_index, total_processed, ma
                         # Save skipped record immediately
                         skipped_file = output_dir / f'skipped_records_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
                         with open(skipped_file, 'w') as f:
-                            json.dump([skipped_records[-1]], f, indent=2)  # Save only the current skipped record
+                            json.dump([skipped_records[-1]], f, indent=2)
                         logger.info(f"Saved skipped record to {skipped_file}")
                     break
             
