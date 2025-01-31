@@ -130,8 +130,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pandas pyarrow
+          npm install adm-zip
           
-      - name: Download Test Artifacts
+      - name: Download and Extract Test Artifacts
         if: steps.wait_test.outputs.conclusion == 'success' && steps.wait_test.outputs.artifact_name != ''
         uses: actions/github-script@v7
         with:
@@ -139,41 +140,42 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
+            const AdmZip = require(path.join(process.env.GITHUB_WORKSPACE, 'node_modules/adm-zip'));
             
             const artifactId = '${{ steps.wait_test.outputs.artifact_id }}';
             const runId = '${{ steps.wait_test.outputs.run_id }}';
             
             console.log(`Downloading artifact from run ${runId}`);
             
-            // Download the artifact
-            const download = await github.rest.actions.downloadArtifact({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              artifact_id: parseInt(artifactId),
-              archive_format: 'zip'
-            });
-            
-            // Create artifacts directory
-            fs.mkdirSync('test-artifacts', { recursive: true });
-            
-            // Save the zip file
-            const zipPath = path.join('test-artifacts', 'artifact.zip');
-            fs.writeFileSync(zipPath, Buffer.from(download.data));
-            
-            // Extract the zip file
-            const AdmZip = require('adm-zip');
-            const zip = new AdmZip(zipPath);
-            zip.extractAllTo('test-artifacts', true);
-            
-            // Clean up zip file
-            fs.unlinkSync(zipPath);
-            
-            console.log('Artifact downloaded and extracted');
+            try {
+              // Download the artifact
+              const download = await github.rest.actions.downloadArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: parseInt(artifactId),
+                archive_format: 'zip'
+              });
+              
+              // Create artifacts directory
+              fs.mkdirSync('test-artifacts', { recursive: true });
+              
+              // Save the zip file
+              const zipPath = path.join('test-artifacts', 'artifact.zip');
+              fs.writeFileSync(zipPath, Buffer.from(download.data));
+              
+              // Extract the zip file
+              const zip = new AdmZip(zipPath);
+              zip.extractAllTo('test-artifacts', true);
+              
+              // Clean up zip file
+              fs.unlinkSync(zipPath);
+              
+              console.log('Artifact downloaded and extracted successfully');
+            } catch (error) {
+              console.error('Error downloading or extracting artifact:', error);
+              core.setFailed(error.message);
+            }
 
-      - name: Install adm-zip
-        if: steps.wait_test.outputs.conclusion == 'success' && steps.wait_test.outputs.artifact_name != ''
-        run: npm install adm-zip
-      
       - name: Evaluate Test Results
         if: steps.wait_test.outputs.conclusion == 'success'
         id: evaluate_test
