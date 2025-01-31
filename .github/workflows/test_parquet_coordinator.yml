@@ -9,19 +9,19 @@ on:
         default: '100'
         type: string
       segment_size:
-        description: 'Records per workflow (e.g. 10000)'
+        description: 'Records per workflow'
         required: false
-        default: '10000'
+        default: '5000'
         type: string
       total_records:
         description: 'Total records to process'
         required: false
-        default: '100000'
+        default: '25000'
         type: string
       max_concurrent:
         description: 'Maximum concurrent workflows'
         required: false
-        default: '5'
+        default: '3'
         type: string
 
 # Add concurrency to prevent multiple coordinators running simultaneously
@@ -254,13 +254,12 @@ jobs:
           python -c "
           import math
           
-          total = int('${{ inputs.total_records }}')
-          segment = int('${{ inputs.segment_size }}')
+          total = int('${{ inputs.total_records }}')  # 25000 records total
+          segment = int('${{ inputs.segment_size }}')  # 5000 records per workflow
           avg_time = float('${{ needs.test-run.outputs.processing_time }}')
           
-          # Adjust segment size based on processing time if needed
-          if avg_time > 15:  # If average record takes >15s
-              segment = min(segment, 5000)  # Reduce segment size
+          # Fixed segment size for 5 workflows
+          segment = total // 5  # Ensures exactly 5 segments of 5000 records each
           
           segments = []
           for i in range(0, total, segment):
@@ -276,11 +275,12 @@ jobs:
               for s in segments:
                   f.write(f'{s[\"start\"]},{s[\"end\"]},{s[\"name\"]}\n')
           
-          print(f'Found {len(segments)} segments')
+          print(f'Created {len(segments)} segments of {segment} records each')
           print(f'Average processing time per record: {avg_time:.2f}s')
-          print(f'Adjusted segment size: {segment}')
+          print(f'Estimated time per workflow: {(avg_time * segment)/3600:.2f} hours')
+          print(f'Total estimated time: {(avg_time * total)/(3600 * 3):.2f} hours with 3 concurrent workflows')
           "
-          
+
       - name: Trigger Processing Workflows
         uses: actions/github-script@v7
         with:
@@ -304,27 +304,23 @@ jobs:
             // Process segments in batches
             for (let i = 0; i < segments.length; i += BATCH_SIZE) {
               const batch = segments.slice(i, i + BATCH_SIZE);
-              console.log(`Processing batch ${i/BATCH_SIZE + 1} of ${Math.ceil(segments.length/BATCH_SIZE)}`);
+              console.log(`Processing batch ${Math.floor(i/BATCH_SIZE + 1)} of ${Math.ceil(segments.length/BATCH_SIZE)}`);
               
               // Check current running workflows
-              const running = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'test_parquet_processor.yml',
-                status: 'in_progress'
-              });
-              
-              // Wait if too many workflows are running
-              while (running.data.total_count >= MAX_CONCURRENT) {
-                console.log(`${running.data.total_count} workflows running, waiting...`);
-                await new Promise(resolve => setTimeout(resolve, 30000));
-                running = await github.rest.actions.listWorkflowRuns({
+              let runningWorkflows;
+              do {
+                runningWorkflows = await github.rest.actions.listWorkflowRuns({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   workflow_id: 'test_parquet_processor.yml',
                   status: 'in_progress'
                 });
-              }
+                
+                if (runningWorkflows.data.total_count >= MAX_CONCURRENT) {
+                  console.log(`${runningWorkflows.data.total_count} workflows running, waiting...`);
+                  await new Promise(resolve => setTimeout(resolve, 30000));
+                }
+              } while (runningWorkflows.data.total_count >= MAX_CONCURRENT);
               
               // Launch workflows in this batch
               for (const segment of batch) {
