@@ -53,14 +53,16 @@ jobs:
         with:
           fetch-depth: 0
           
-      # Download the virtual environment
-      - name: Download virtual environment
-        uses: actions/download-artifact@v4
+      # Restore virtual environment
+      - name: Cache virtual environment
+        uses: actions/cache@v4
         with:
-          name: venv
-          path: |
-            ~/.cache/pip
-            ~/.local/lib/python3.10/site-packages
+          path: venv
+          key: venv-${{ runner.os }}-3.10-${{ hashFiles('requirements.txt') }}
+          
+      - name: Activate virtual environment
+        run: |
+          source venv/bin/activate
           
       - name: Generate Timestamp
         id: timestamp
@@ -68,8 +70,8 @@ jobs:
           echo "timestamp=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
           
       - name: Process URLs
-        id: process_urls
         run: |
+          source venv/bin/activate
           python .github/scripts/test_parquet_processor.py \
             --output-dir data/processed_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }} \
             --batch-size ${{ inputs.batch_size }} \

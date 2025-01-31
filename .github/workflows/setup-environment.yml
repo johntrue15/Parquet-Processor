@@ -24,32 +24,30 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
-          cache: 'pip'
           
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-            
+      - name: Create and activate virtual environment
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
       - name: Install Chrome and ChromeDriver
         if: inputs.install-chrome
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
-          
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+
+      # Cache the virtual environment
+      - name: Cache virtual environment
+        uses: actions/cache@v4
+        with:
+          path: venv
+          key: venv-${{ runner.os }}-${{ inputs.python-version }}-${{ hashFiles('requirements.txt') }}
 
       # Upload the environment as an artifact for reuse
       - name: Upload virtual environment
         uses: actions/upload-artifact@v4
         with:
           name: venv
-          path: |
-            ~/.cache/pip
-            ~/.local/lib/python${{ inputs.python-version }}/site-packages 
+          path: venv 
