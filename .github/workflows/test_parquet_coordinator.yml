@@ -1,4 +1,4 @@
-name: Test Parquet Processing Coordinator
+name: Parquet Processing Coordinator
 
 on:
   workflow_dispatch:
@@ -73,7 +73,7 @@ jobs:
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   workflow_id: 'test_parquet_processor.yml',
-                  ref: 'main',
+                  ref: context.ref,
                   inputs: {
                     start_index: segment.start,
                     total_processed: '0',

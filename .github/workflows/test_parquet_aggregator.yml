@@ -1,4 +1,4 @@
-name: Test Parquet Results Aggregator
+name: Parquet Results Aggregator
 
 on:
   workflow_dispatch:
@@ -25,7 +25,7 @@ jobs:
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: test-parquet-data-*
+          pattern: processed-parquet-data-*
           path: aggregated_data
           
       - name: Aggregate Results
@@ -50,7 +50,9 @@ jobs:
               combined_df = pd.concat(dfs, ignore_index=True)
               
               # Save combined results
-              combined_df.to_parquet('combined_results.parquet')
+              os.makedirs('data/aggregated', exist_ok=True)
+              output_file = f'data/aggregated/combined_results_{os.environ.get(\"GITHUB_RUN_ID\", \"latest\")}.parquet'
+              combined_df.to_parquet(output_file)
               
               # Generate statistics
               print('\nProcessing Statistics:')
@@ -65,5 +67,5 @@ jobs:
       - name: Upload Combined Results
         uses: actions/upload-artifact@v4
         with:
-          name: combined-results-${{ inputs.timestamp }}
-          path: combined_results.parquet 
+          name: aggregated-results-${{ inputs.timestamp }}
+          path: data/aggregated/ 

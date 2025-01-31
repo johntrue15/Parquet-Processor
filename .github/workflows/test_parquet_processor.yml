@@ -84,69 +84,36 @@ jobs:
           echo "GITHUB_OUTPUT=${GITHUB_OUTPUT}"
           
           python .github/scripts/test_parquet_processor.py \
-            --output-dir data/test_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }} \
+            --output-dir data/processed_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }} \
             --batch-size ${{ inputs.batch_size }} \
             --max-records ${{ inputs.max_records }} \
             --start-index ${{ inputs.start_index }} \
             --total-processed ${{ inputs.total_processed }} \
             --total-target ${{ inputs.total_target }} \
-            --log-file data/test_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }}/processor.log \
+            --log-file data/processed_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }}/processor.log \
             --output-file "${GITHUB_OUTPUT}"
             
       - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-parquet-data-${{ inputs.segment_name }}-${{ steps.timestamp.outputs.timestamp }}
-          path: data/test_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }}
+          name: processed-parquet-data-${{ inputs.segment_name }}-${{ steps.timestamp.outputs.timestamp }}
+          path: data/processed_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }}
           
-      - name: Compare Results
-        run: |
-          python -c "
-          import pandas as pd
-          import glob
-          import os
-          
-          # Load test results
-          test_files = glob.glob('data/test_parquet/*/*.parquet')
-          if test_files:
-              test_df = pd.read_parquet(test_files[-1])
-              print('\nTest Results:')
-              print(f'Records processed: {len(test_df)}')
-              print(f'Average processing time: {test_df.processing_time.mean():.2f}s')
-              print(f'Missing values per record: {test_df.isnull().sum().sum() / len(test_df):.1f}')
-              
-              # Compare with original if exists
-              orig_files = glob.glob('data/parquet/*/*.parquet')
-              if orig_files:
-                  orig_df = pd.read_parquet(orig_files[-1])
-                  print('\nComparison with Original:')
-                  print(f'Original processing time: {orig_df.processing_time.mean():.2f}s')
-                  print(f'Original missing values per record: {orig_df.isnull().sum().sum() / len(orig_df):.1f}')
-                  print(f'Speed improvement: {(orig_df.processing_time.mean() / test_df.processing_time.mean()):.1f}x')
-          "
-          
-      - name: Create Test Summary
+      - name: Create Processing Summary
         if: always()
         run: |
-          echo "Test Processing Summary" > test_summary.md
-          echo "======================" >> test_summary.md
-          echo "" >> test_summary.md
-          echo "- Timestamp: ${{ steps.timestamp.outputs.timestamp }}" >> test_summary.md
-          echo "- Batch Size: ${{ inputs.batch_size }}" >> test_summary.md
-          echo "- Max Records: ${{ inputs.max_records }}" >> test_summary.md
-          echo "- Start Index: ${{ inputs.start_index }}" >> test_summary.md
-          echo "" >> test_summary.md
+          echo "Processing Summary" > processing_summary.md
+          echo "==================" >> processing_summary.md
+          echo "" >> processing_summary.md
+          echo "- Timestamp: ${{ steps.timestamp.outputs.timestamp }}" >> processing_summary.md
+          echo "- Batch Size: ${{ inputs.batch_size }}" >> processing_summary.md
+          echo "- Max Records: ${{ inputs.max_records }}" >> processing_summary.md
+          echo "- Start Index: ${{ inputs.start_index }}" >> processing_summary.md
           
-          if [ -f comparison_results.txt ]; then
-            echo "Performance Comparison" >> test_summary.md
-            echo "--------------------" >> test_summary.md
-            cat comparison_results.txt >> test_summary.md
-          fi
-          
-      - name: Upload Test Summary
+      - name: Upload Processing Summary
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-summary-${{ steps.timestamp.outputs.timestamp }}
-          path: test_summary.md 
+          name: processing-summary-${{ steps.timestamp.outputs.timestamp }}
+          path: processing_summary.md 

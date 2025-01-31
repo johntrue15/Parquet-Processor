@@ -29,16 +29,13 @@ def setup_logging(log_file):
     return logging.getLogger(__name__)
 
 def get_latest_data_file():
-    """Find the most recent morphosource_data_complete.json file"""
-    data_dir = Path('data')
-    timestamp_dirs = sorted([d for d in data_dir.iterdir() if d.is_dir() and d.name[0].isdigit()], reverse=True)
+    """Find the morphosource_data_complete.json file"""
+    data_file = Path('data/morphosource_data_complete.json')
     
-    for dir in timestamp_dirs:
-        data_file = dir / 'morphosource_data_complete.json'
-        if data_file.exists():
-            return data_file
+    if data_file.exists():
+        return data_file
             
-    raise FileNotFoundError("No morphosource_data_complete.json found")
+    raise FileNotFoundError("morphosource_data_complete.json not found in data directory")
 
 def setup_driver():
     """Configure Chrome driver with optimized settings for testing"""
