@@ -1,0 +1,152 @@
+name: Test Parquet Data Processor
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_index:
+        description: 'Starting index for batch processing'
+        required: false
+        default: '0'
+      total_processed:
+        description: 'Total records processed so far'
+        required: false
+        default: '0'
+      batch_size:
+        description: 'Number of records to process in each sub-batch'
+        required: false
+        default: '50'
+        type: string
+      max_records:
+        description: 'Maximum records to process in this workflow run'
+        required: false
+        default: '50'
+        type: string
+      segment_name:
+        description: 'Name of the segment being processed'
+        required: false
+        default: 'default'
+        type: string
+      total_target:
+        description: 'Total records to process (0 for all records)'
+        required: false
+        default: '0'
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  actions: write
+
+jobs:
+  test-process-urls:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          
+      - name: Install Chrome and ChromeDriver
+        run: |
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          
+          CHROME_VERSION=$(google-chrome --version | cut -d " " -f 3)
+          wget -q "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/$CHROME_VERSION/linux64/chromedriver-linux64.zip"
+          unzip chromedriver-linux64.zip
+          sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
+          sudo chmod +x /usr/local/bin/chromedriver
+          rm -rf chromedriver-linux64.zip chromedriver-linux64
+          
+          google-chrome --version
+          chromedriver --version
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas pyarrow tqdm selenium
+          
+      - name: Generate Timestamp
+        id: timestamp
+        run: |
+          TS=$(date +'%Y-%m-%d_%H-%M-%S')
+          echo "timestamp=$TS" >> $GITHUB_OUTPUT
+          
+      - name: Process URLs
+        id: process_urls
+        run: |
+          echo "GITHUB_OUTPUT=${GITHUB_OUTPUT}"
+          
+          python .github/scripts/test_parquet_processor.py \
+            --output-dir data/test_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }} \
+            --batch-size ${{ inputs.batch_size }} \
+            --max-records ${{ inputs.max_records }} \
+            --start-index ${{ inputs.start_index }} \
+            --total-processed ${{ inputs.total_processed }} \
+            --total-target ${{ inputs.total_target }} \
+            --log-file data/test_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }}/processor.log \
+            --output-file "${GITHUB_OUTPUT}"
+            
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-parquet-data-${{ inputs.segment_name }}-${{ steps.timestamp.outputs.timestamp }}
+          path: data/test_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }}
+          
+      - name: Compare Results
+        run: |
+          python -c "
+          import pandas as pd
+          import glob
+          import os
+          
+          # Load test results
+          test_files = glob.glob('data/test_parquet/*/*.parquet')
+          if test_files:
+              test_df = pd.read_parquet(test_files[-1])
+              print('\nTest Results:')
+              print(f'Records processed: {len(test_df)}')
+              print(f'Average processing time: {test_df.processing_time.mean():.2f}s')
+              print(f'Missing values per record: {test_df.isnull().sum().sum() / len(test_df):.1f}')
+              
+              # Compare with original if exists
+              orig_files = glob.glob('data/parquet/*/*.parquet')
+              if orig_files:
+                  orig_df = pd.read_parquet(orig_files[-1])
+                  print('\nComparison with Original:')
+                  print(f'Original processing time: {orig_df.processing_time.mean():.2f}s')
+                  print(f'Original missing values per record: {orig_df.isnull().sum().sum() / len(orig_df):.1f}')
+                  print(f'Speed improvement: {(orig_df.processing_time.mean() / test_df.processing_time.mean()):.1f}x')
+          "
+          
+      - name: Create Test Summary
+        if: always()
+        run: |
+          echo "Test Processing Summary" > test_summary.md
+          echo "======================" >> test_summary.md
+          echo "" >> test_summary.md
+          echo "- Timestamp: ${{ steps.timestamp.outputs.timestamp }}" >> test_summary.md
+          echo "- Batch Size: ${{ inputs.batch_size }}" >> test_summary.md
+          echo "- Max Records: ${{ inputs.max_records }}" >> test_summary.md
+          echo "- Start Index: ${{ inputs.start_index }}" >> test_summary.md
+          echo "" >> test_summary.md
+          
+          if [ -f comparison_results.txt ]; then
+            echo "Performance Comparison" >> test_summary.md
+            echo "--------------------" >> test_summary.md
+            cat comparison_results.txt >> test_summary.md
+          fi
+          
+      - name: Upload Test Summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-summary-${{ steps.timestamp.outputs.timestamp }}
+          path: test_summary.md 
