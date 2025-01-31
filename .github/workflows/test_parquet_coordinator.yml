@@ -91,75 +91,29 @@ jobs:
               await new Promise(resolve => setTimeout(resolve, 10000));
             }
       
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas pyarrow
+          
       - name: Download Test Artifacts
         if: steps.wait_test.outputs.conclusion == 'success'
-        uses: actions/github-script@v7
+        uses: actions/download-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: parseInt('${{ steps.wait_test.outputs.run_id }}')
-            });
-            
-            const testArtifact = artifacts.data.artifacts.find(
-              a => a.name.startsWith('processed-parquet-data-test-run')
-            );
-            
-            if (testArtifact) {
-              console.log(`Found test artifact: ${testArtifact.name}`);
-              core.setOutput('artifact_id', testArtifact.id);
-            } else {
-              core.setFailed('No test artifacts found');
-            }
+          name: processed-parquet-data-test-run-${{ steps.timestamp.outputs.timestamp }}
+          path: test-artifacts
       
       - name: Evaluate Test Results
         if: steps.wait_test.outputs.conclusion == 'success'
         id: evaluate_test
         run: |
-          python -c "
-          import pandas as pd
-          import glob
-          import os
-          
-          success = False
-          avg_time = 0
-          
-          try:
-              test_files = glob.glob('processed-parquet-data-test-run*/*.parquet')
-              if test_files:
-                  df = pd.read_parquet(test_files[0])
-                  records = len(df)
-                  avg_time = df.processing_time.mean()
-                  errors = df['error'].notna().sum()
-                  
-                  print(f'Test Results:')
-                  print(f'Records processed: {records}')
-                  print(f'Average processing time: {avg_time:.2f}s')
-                  print(f'Records with errors: {errors}')
-                  
-                  # Consider test successful if:
-                  # 1. At least 8 records processed (out of 10)
-                  # 2. Average processing time < 30 seconds
-                  # 3. Error rate < 20%
-                  success = (records >= 8 and 
-                           avg_time < 30 and 
-                           errors/records < 0.2)
-                  
-              print(f'Test evaluation: {"SUCCESS" if success else "FAILED"}')
-              
-              # Set outputs for next job
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write(f'success={str(success).lower()}\n')
-                  f.write(f'avg_time={avg_time}\n')
-                  
-          except Exception as e:
-              print(f'Error evaluating test: {e}')
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write('success=false\n')
-                  f.write('avg_time=0\n')
-          "
+          python .github/scripts/evaluate_test_run.py \
+            --artifacts-dir test-artifacts \
+            --github-output $GITHUB_OUTPUT
 
   coordinate:
     needs: test-run
