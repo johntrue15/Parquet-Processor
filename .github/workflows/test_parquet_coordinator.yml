@@ -286,6 +286,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const fs = require('fs');
             const MAX_CONCURRENT = parseInt('${{ inputs.max_concurrent }}');
             const BATCH_SIZE = 3; // Number of workflows to launch at once
             const BATCH_DELAY = 30000; // 30 seconds between batches

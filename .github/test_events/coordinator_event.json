@@ -1,0 +1,8 @@
+{
+    "inputs": {
+        "batch_size": "50",
+        "segment_size": "1000",
+        "total_records": "5000",
+        "max_concurrent": "3"
+    }
+}

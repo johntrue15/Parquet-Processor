@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  test-env:
+    image: ghcr.io/catthehacker/ubuntu:act-latest
+    volumes:
+      - .:/workspace
+      - /tmp/artifacts:/artifacts
+    working_dir: /workspace
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    command: sleep infinity 

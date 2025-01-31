@@ -1,0 +1,3 @@
+-P ubuntu-latest=python:3.10-slim
+--container-architecture linux/amd64
+--artifact-server-path=/tmp/artifacts 

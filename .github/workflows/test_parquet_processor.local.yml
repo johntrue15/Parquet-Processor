@@ -1,0 +1,92 @@
+name: Test Parquet Data Processor (Local)
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_index:
+        description: 'Starting index for batch processing'
+        required: false
+        default: '0'
+      total_processed:
+        description: 'Total records processed so far'
+        required: false
+        default: '0'
+      batch_size:
+        description: 'Number of records to process in each sub-batch'
+        required: false
+        default: '50'
+        type: string
+      max_records:
+        description: 'Maximum records to process in this workflow run'
+        required: false
+        default: '50'
+        type: string
+      segment_name:
+        description: 'Name of the segment being processed'
+        required: false
+        default: 'default'
+        type: string
+      total_target:
+        description: 'Total records to process (0 for all records)'
+        required: false
+        default: '0'
+        type: string
+
+jobs:
+  test-process-urls:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Set up Python
+        run: |
+          if ! command -v python3 &> /dev/null; then
+              apt-get update && apt-get install -y python3 python3-pip
+          fi
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pandas pyarrow tqdm selenium
+        shell: bash
+          
+      - name: Generate Timestamp
+        id: timestamp
+        run: |
+          TS=$(date +'%Y-%m-%d_%H-%M-%S')
+          echo "timestamp=$TS" >> $GITHUB_OUTPUT
+          
+      - name: Process URLs
+        id: process_urls
+        run: |
+          echo "GITHUB_OUTPUT=${GITHUB_OUTPUT}"
+          
+          python .github/scripts/test_parquet_processor.py \
+            --output-dir data/processed_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }} \
+            --batch-size ${{ inputs.batch_size }} \
+            --max-records ${{ inputs.max_records }} \
+            --start-index ${{ inputs.start_index }} \
+            --total-processed ${{ inputs.total_processed }} \
+            --total-target ${{ inputs.total_target }} \
+            --log-file data/processed_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }}/processor.log \
+            --output-file "${GITHUB_OUTPUT}"
+            
+      - name: Handle Artifacts
+        if: always()
+        run: |
+          # Create output directory
+          mkdir -p /tmp/artifacts/processed-parquet-data-${{ inputs.segment_name }}-${{ steps.timestamp.outputs.timestamp }}
+          
+          # Copy processed data
+          cp -r data/processed_parquet/${{ inputs.segment_name }}/${{ steps.timestamp.outputs.timestamp }}/* \
+            /tmp/artifacts/processed-parquet-data-${{ inputs.segment_name }}-${{ steps.timestamp.outputs.timestamp }}/
+          
+          # Create and copy summary
+          echo "Processing Summary" > /tmp/artifacts/processing_summary.md
+          echo "==================" >> /tmp/artifacts/processing_summary.md
+          echo "" >> /tmp/artifacts/processing_summary.md
+          echo "- Timestamp: ${{ steps.timestamp.outputs.timestamp }}" >> /tmp/artifacts/processing_summary.md
+          echo "- Batch Size: ${{ inputs.batch_size }}" >> /tmp/artifacts/processing_summary.md
+          echo "- Max Records: ${{ inputs.max_records }}" >> /tmp/artifacts/processing_summary.md
+          echo "- Start Index: ${{ inputs.start_index }}" >> /tmp/artifacts/processing_summary.md
+        shell: bash 
