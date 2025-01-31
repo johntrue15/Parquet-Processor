@@ -98,7 +98,7 @@ jobs:
               }
             }
             
-      - name: Extract and combine parquet files
+      - name: Extract and combine files
         run: |
           python - <<EOF
           import os
@@ -106,6 +106,7 @@ jobs:
           import pandas as pd
           from pathlib import Path
           import zipfile
+          import json
           
           # Extract all zip files
           for segment_dir in glob.glob('artifacts/*'):
@@ -134,42 +135,77 @@ jobs:
           print("Combining parquet files...")
           dfs = []
           total_records = 0
+          file_stats = []
+          
           for file in all_parquet_files:
               df = pd.read_parquet(file)
               total_records += len(df)
               dfs.append(df)
+              file_stats.append({
+                  'file': str(file),
+                  'records': len(df),
+                  'size': file.stat().st_size
+              })
               print(f"Read {len(df)} records from {file}")
           
           combined_df = pd.concat(dfs, ignore_index=True)
           print(f"Total records in combined dataset: {len(combined_df)}")
           
-          # Save combined dataset
+          # Create output directory
           output_dir = f"data/processed_parquet/combined/{os.environ['GITHUB_RUN_ID']}"
           os.makedirs(output_dir, exist_ok=True)
-          output_file = os.path.join(output_dir, f"morphosource_data_combined.parquet")
-          combined_df.to_parquet(output_file, index=False)
-          print(f"Saved combined dataset to {output_file}")
           
-          # Create summary
+          # Save as parquet
+          parquet_file = os.path.join(output_dir, "morphosource_data_combined.parquet")
+          combined_df.to_parquet(parquet_file, index=False)
+          print(f"Saved parquet dataset to {parquet_file}")
+          
+          # Save as CSV
+          csv_file = os.path.join(output_dir, "morphosource_data_combined.csv")
+          combined_df.to_csv(csv_file, index=False)
+          print(f"Saved CSV dataset to {csv_file}")
+          
+          # Generate statistics
+          stats = {
+              'total_records': len(combined_df),
+              'files_combined': len(all_parquet_files),
+              'avg_processing_time': combined_df['processing_time'].mean(),
+              'total_processing_time': combined_df['processing_time'].sum(),
+              'media_types': combined_df['media_type'].value_counts().to_dict(),
+              'source_files': file_stats
+          }
+          
+          # Save statistics as JSON
+          stats_file = os.path.join(output_dir, "statistics.json")
+          with open(stats_file, 'w') as f:
+              json.dump(stats, f, indent=2)
+          
+          # Create markdown summary
           with open('aggregation_summary.md', 'w') as f:
               f.write("# Aggregation Summary\n\n")
-              f.write(f"- Total records: {len(combined_df)}\n")
-              f.write(f"- Files combined: {len(all_parquet_files)}\n")
-              f.write(f"- Average processing time: {combined_df['processing_time'].mean():.2f}s\n")
-              f.write(f"- Total processing time: {combined_df['processing_time'].sum():.2f}s\n")
-              f.write("\n## Source Files:\n")
-              for file in all_parquet_files:
-                  df = pd.read_parquet(file)
-                  f.write(f"- {file}: {len(df)} records\n")
+              f.write(f"- Total records: {stats['total_records']:,}\n")
+              f.write(f"- Files combined: {stats['files_combined']}\n")
+              f.write(f"- Average processing time: {stats['avg_processing_time']:.2f}s\n")
+              f.write(f"- Total processing time: {stats['total_processing_time']:.2f}s\n")
               
-              f.write("\n## Media Types:\n")
-              f.write(combined_df['media_type'].value_counts().to_string())
+              f.write("\n## Output Files\n")
+              f.write(f"- Parquet: {os.path.basename(parquet_file)} ({os.path.getsize(parquet_file):,} bytes)\n")
+              f.write(f"- CSV: {os.path.basename(csv_file)} ({os.path.getsize(csv_file):,} bytes)\n")
+              f.write(f"- Statistics: {os.path.basename(stats_file)}\n")
+              
+              f.write("\n## Source Files\n")
+              for stat in file_stats:
+                  f.write(f"- {stat['file']}: {stat['records']:,} records ({stat['size']:,} bytes)\n")
+              
+              f.write("\n## Media Types\n")
+              for media_type, count in stats['media_types'].items():
+                  f.write(f"- {media_type}: {count:,}\n")
           EOF
           
-      - name: Upload combined dataset
+      - name: Upload combined datasets
         uses: actions/upload-artifact@v4
         with:
-          name: combined-parquet-data
+          name: combined-data
           path: data/processed_parquet/combined/${{ github.run_id }}
           
       - name: Upload summary
