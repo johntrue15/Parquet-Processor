@@ -16,6 +16,10 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -39,4 +43,13 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt 
+          pip install -r requirements.txt
+
+      # Upload the environment as an artifact for reuse
+      - name: Upload virtual environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: venv
+          path: |
+            ~/.cache/pip
+            ~/.local/lib/python${{ inputs.python-version }}/site-packages 

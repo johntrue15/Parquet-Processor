@@ -53,11 +53,14 @@ jobs:
         with:
           fetch-depth: 0
           
-      # Re-use cached environment
-      - uses: actions/cache@v4
+      # Download the virtual environment
+      - name: Download virtual environment
+        uses: actions/download-artifact@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          name: venv
+          path: |
+            ~/.cache/pip
+            ~/.local/lib/python3.10/site-packages
           
       - name: Generate Timestamp
         id: timestamp
