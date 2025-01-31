@@ -63,6 +63,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const launchTime = new Date('${{ steps.test_workflow.outputs.launch_time }}');
+            let artifactName = '';
             
             // Wait up to 10 minutes
             for (let i = 0; i < 60; i++) {
@@ -83,6 +84,24 @@ jobs:
                   console.log('Test workflow completed');
                   core.setOutput('run_id', testRun.id);
                   core.setOutput('conclusion', testRun.conclusion);
+                  
+                  // Get artifacts for this run
+                  const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    run_id: testRun.id
+                  });
+                  
+                  // Find the processed data artifact
+                  const dataArtifact = artifacts.data.artifacts.find(
+                    a => a.name.startsWith('processed-parquet-data-test-run')
+                  );
+                  
+                  if (dataArtifact) {
+                    artifactName = dataArtifact.name;
+                    core.setOutput('artifact_name', artifactName);
+                    console.log(`Found artifact: ${artifactName}`);
+                  }
                   break;
                 }
               }
@@ -101,10 +120,10 @@ jobs:
           pip install pandas pyarrow
           
       - name: Download Test Artifacts
-        if: steps.wait_test.outputs.conclusion == 'success'
+        if: steps.wait_test.outputs.conclusion == 'success' && steps.wait_test.outputs.artifact_name != ''
         uses: actions/download-artifact@v4
         with:
-          name: processed-parquet-data-test-run-${{ steps.timestamp.outputs.timestamp }}
+          name: ${{ steps.wait_test.outputs.artifact_name }}
           path: test-artifacts
       
       - name: Evaluate Test Results
