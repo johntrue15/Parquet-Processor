@@ -1,0 +1,69 @@
+name: Test Parquet Results Aggregator
+
+on:
+  workflow_dispatch:
+    inputs:
+      timestamp:
+        description: 'Timestamp of the processing run'
+        required: true
+
+jobs:
+  aggregate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas pyarrow
+          
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-parquet-data-*
+          path: aggregated_data
+          
+      - name: Aggregate Results
+        run: |
+          python -c "
+          import pandas as pd
+          import glob
+          import os
+          
+          # Find all parquet files
+          all_files = glob.glob('aggregated_data/*/*.parquet')
+          
+          # Combine all dataframes
+          dfs = []
+          for f in all_files:
+              df = pd.read_parquet(f)
+              segment = os.path.basename(os.path.dirname(f))
+              df['segment'] = segment
+              dfs.append(df)
+              
+          if dfs:
+              combined_df = pd.concat(dfs, ignore_index=True)
+              
+              # Save combined results
+              combined_df.to_parquet('combined_results.parquet')
+              
+              # Generate statistics
+              print('\nProcessing Statistics:')
+              print(f'Total records processed: {len(combined_df)}')
+              print(f'Average processing time: {combined_df.processing_time.mean():.2f}s')
+              print('\nBy Segment:')
+              print(combined_df.groupby('segment').agg({
+                  'processing_time': ['mean', 'min', 'max', 'count']
+              }))
+          "
+          
+      - name: Upload Combined Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-results-${{ inputs.timestamp }}
+          path: combined_results.parquet 
