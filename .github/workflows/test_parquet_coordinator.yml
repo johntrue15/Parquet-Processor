@@ -64,6 +64,7 @@ jobs:
           script: |
             const launchTime = new Date('${{ steps.test_workflow.outputs.launch_time }}');
             let artifactName = '';
+            let artifactId = '';
             
             // Wait up to 10 minutes
             for (let i = 0; i < 60; i++) {
@@ -73,41 +74,52 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 workflow_id: 'test_parquet_processor.yml',
-                created: `>=${launchTime.toISOString()}`
+                status: 'completed',
+                branch: context.ref.replace('refs/heads/', ''),
+                per_page: 10
               });
               
-              if (runs.data.workflow_runs.length > 0) {
-                const testRun = runs.data.workflow_runs[0];
-                console.log(`Found test run: ${testRun.status}`);
+              // Find the most recent run that matches our test criteria
+              const testRun = runs.data.workflow_runs.find(run => {
+                const runTime = new Date(run.created_at);
+                return runTime >= launchTime && 
+                       run.event === 'workflow_dispatch' &&
+                       run.head_branch === context.ref.replace('refs/heads/', '') &&
+                       run.status === 'completed';
+              });
+              
+              if (testRun) {
+                console.log(`Found completed test run: ${testRun.id}`);
+                core.setOutput('run_id', testRun.id);
+                core.setOutput('conclusion', testRun.conclusion);
                 
-                if (testRun.status === 'completed') {
-                  console.log('Test workflow completed');
-                  core.setOutput('run_id', testRun.id);
-                  core.setOutput('conclusion', testRun.conclusion);
-                  
-                  // Get artifacts for this run
-                  const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    run_id: testRun.id
-                  });
-                  
-                  // Find the processed data artifact
-                  const dataArtifact = artifacts.data.artifacts.find(
-                    a => a.name.startsWith('processed-parquet-data-test-run')
-                  );
-                  
-                  if (dataArtifact) {
-                    artifactName = dataArtifact.name;
-                    core.setOutput('artifact_name', artifactName);
-                    console.log(`Found artifact: ${artifactName}`);
-                  }
+                // Get artifacts for this run
+                const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: testRun.id
+                });
+                
+                // Find the processed data artifact
+                const dataArtifact = artifacts.data.artifacts.find(
+                  a => a.name.startsWith('processed-parquet-data-test-run')
+                );
+                
+                if (dataArtifact) {
+                  artifactName = dataArtifact.name;
+                  artifactId = dataArtifact.id;
+                  core.setOutput('artifact_name', artifactName);
+                  core.setOutput('artifact_id', artifactId);
+                  console.log(`Found artifact: ${artifactName} (ID: ${artifactId})`);
                   break;
                 }
               }
               
               // Wait 10 seconds before next check
-              await new Promise(resolve => setTimeout(resolve, 10000));
+              if (!testRun) {
+                console.log('No matching completed test run found yet, waiting...');
+                await new Promise(resolve => setTimeout(resolve, 10000));
+              }
             }
       
       - uses: actions/setup-python@v5
@@ -121,10 +133,46 @@ jobs:
           
       - name: Download Test Artifacts
         if: steps.wait_test.outputs.conclusion == 'success' && steps.wait_test.outputs.artifact_name != ''
-        uses: actions/download-artifact@v4
+        uses: actions/github-script@v7
         with:
-          name: ${{ steps.wait_test.outputs.artifact_name }}
-          path: test-artifacts
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            const artifactId = '${{ steps.wait_test.outputs.artifact_id }}';
+            const runId = '${{ steps.wait_test.outputs.run_id }}';
+            
+            console.log(`Downloading artifact from run ${runId}`);
+            
+            // Download the artifact
+            const download = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: parseInt(artifactId),
+              archive_format: 'zip'
+            });
+            
+            // Create artifacts directory
+            fs.mkdirSync('test-artifacts', { recursive: true });
+            
+            // Save the zip file
+            const zipPath = path.join('test-artifacts', 'artifact.zip');
+            fs.writeFileSync(zipPath, Buffer.from(download.data));
+            
+            // Extract the zip file
+            const AdmZip = require('adm-zip');
+            const zip = new AdmZip(zipPath);
+            zip.extractAllTo('test-artifacts', true);
+            
+            // Clean up zip file
+            fs.unlinkSync(zipPath);
+            
+            console.log('Artifact downloaded and extracted');
+
+      - name: Install adm-zip
+        if: steps.wait_test.outputs.conclusion == 'success' && steps.wait_test.outputs.artifact_name != ''
+        run: npm install adm-zip
       
       - name: Evaluate Test Results
         if: steps.wait_test.outputs.conclusion == 'success'
