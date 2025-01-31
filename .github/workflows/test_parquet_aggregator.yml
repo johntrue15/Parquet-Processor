@@ -3,10 +3,15 @@ name: Aggregate Parquet Data
 on:
   workflow_dispatch:
     inputs:
-      timestamp:
-        description: 'Timestamp to aggregate (YYYY-MM-DD_HH-mm-ss)'
+      coordinator_run_id:
+        description: 'Coordinator workflow run ID'
         required: true
         type: string
+      num_workflows:
+        description: 'Number of processor workflows (e.g. 5)'
+        required: true
+        type: string
+        default: '5'
 
 jobs:
   aggregate:
@@ -25,46 +30,71 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas pyarrow
           
-      - name: Download artifacts
+      - name: Get workflow information
+        id: workflow_info
         uses: actions/github-script@v7
         with:
           script: |
-            const segments = ['0k-5k', '5k-10k', '10k-15k', '15k-20k', '20k-25k'];
+            // Get coordinator run info
+            const coordinator = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: parseInt('${{ inputs.coordinator_run_id }}')
+            });
             
-            for (const segment of segments) {
-              const artifactName = `processed-parquet-data-${segment}-${{ inputs.timestamp }}`;
-              console.log(`Downloading artifact: ${artifactName}`);
+            // Get all workflow runs triggered after coordinator
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'test_parquet_processor.yml',
+              created: `>=${coordinator.data.created_at}`,
+              per_page: 100
+            });
+            
+            // Filter runs triggered by this coordinator
+            const processorRuns = runs.data.workflow_runs
+              .filter(run => run.status === 'completed')
+              .filter(run => new Date(run.created_at) >= new Date(coordinator.data.created_at))
+              .slice(0, parseInt('${{ inputs.num_workflows }}'));
+            
+            console.log(`Found ${processorRuns.length} processor runs`);
+            
+            // Download artifacts from each run
+            for (const run of processorRuns) {
+              console.log(`Processing run ${run.id} (${run.created_at})`);
               
-              try {
-                const artifacts = await github.rest.actions.listArtifactsForRepo({
+              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id
+              });
+              
+              // Find the parquet data artifact
+              const dataArtifact = artifacts.data.artifacts
+                .find(a => a.name.startsWith('processed-parquet-data-'));
+              
+              if (dataArtifact) {
+                console.log(`Found artifact: ${dataArtifact.name}`);
+                
+                // Download the artifact
+                const download = await github.rest.actions.downloadArtifact({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  per_page: 100
+                  artifact_id: dataArtifact.id,
+                  archive_format: 'zip'
                 });
                 
-                const artifact = artifacts.data.artifacts.find(a => a.name === artifactName);
+                // Save to disk
+                const fs = require('fs');
+                const segmentMatch = dataArtifact.name.match(/processed-parquet-data-(\d+k-\d+k)/);
+                const segment = segmentMatch ? segmentMatch[1] : run.id;
                 
-                if (artifact) {
-                  console.log(`Found artifact ${artifactName} (${artifact.id})`);
-                  
-                  // Download the artifact
-                  const download = await github.rest.actions.downloadArtifact({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    artifact_id: artifact.id,
-                    archive_format: 'zip'
-                  });
-                  
-                  const fs = require('fs');
-                  fs.mkdirSync(`artifacts/${segment}`, { recursive: true });
-                  fs.writeFileSync(`artifacts/${segment}/artifact.zip`, Buffer.from(download.data));
-                  
-                  console.log(`Downloaded artifact to artifacts/${segment}/artifact.zip`);
-                } else {
-                  console.log(`Artifact ${artifactName} not found`);
-                }
-              } catch (error) {
-                console.error(`Error processing ${artifactName}:`, error);
+                fs.mkdirSync(`artifacts/${segment}`, { recursive: true });
+                fs.writeFileSync(`artifacts/${segment}/artifact.zip`, Buffer.from(download.data));
+                
+                console.log(`Downloaded artifact to artifacts/${segment}/artifact.zip`);
+              } else {
+                console.log('No matching artifact found');
               }
             }
             
@@ -78,7 +108,7 @@ jobs:
           import zipfile
           
           # Extract all zip files
-          for segment_dir in glob.glob('artifacts/*k-*k'):
+          for segment_dir in glob.glob('artifacts/*'):
               zip_path = os.path.join(segment_dir, 'artifact.zip')
               if os.path.exists(zip_path):
                   print(f"Extracting {zip_path}")
@@ -87,7 +117,7 @@ jobs:
           
           # Find all parquet files
           all_parquet_files = []
-          for segment_dir in glob.glob('artifacts/*k-*k'):
+          for segment_dir in glob.glob('artifacts/*'):
               # Recursively find all parquet files
               parquet_files = list(Path(segment_dir).rglob('*.parquet'))
               if parquet_files:
@@ -114,7 +144,7 @@ jobs:
           print(f"Total records in combined dataset: {len(combined_df)}")
           
           # Save combined dataset
-          output_dir = f"data/processed_parquet/combined/{inputs.timestamp}"
+          output_dir = f"data/processed_parquet/combined/{os.environ['GITHUB_RUN_ID']}"
           os.makedirs(output_dir, exist_ok=True)
           output_file = os.path.join(output_dir, f"morphosource_data_combined.parquet")
           combined_df.to_parquet(output_file, index=False)
@@ -125,20 +155,25 @@ jobs:
               f.write("# Aggregation Summary\n\n")
               f.write(f"- Total records: {len(combined_df)}\n")
               f.write(f"- Files combined: {len(all_parquet_files)}\n")
+              f.write(f"- Average processing time: {combined_df['processing_time'].mean():.2f}s\n")
+              f.write(f"- Total processing time: {combined_df['processing_time'].sum():.2f}s\n")
               f.write("\n## Source Files:\n")
               for file in all_parquet_files:
                   df = pd.read_parquet(file)
                   f.write(f"- {file}: {len(df)} records\n")
+              
+              f.write("\n## Media Types:\n")
+              f.write(combined_df['media_type'].value_counts().to_string())
           EOF
           
       - name: Upload combined dataset
         uses: actions/upload-artifact@v4
         with:
-          name: combined-parquet-data-${{ inputs.timestamp }}
-          path: data/processed_parquet/combined/${{ inputs.timestamp }}
+          name: combined-parquet-data
+          path: data/processed_parquet/combined/${{ github.run_id }}
           
       - name: Upload summary
         uses: actions/upload-artifact@v4
         with:
-          name: aggregation-summary-${{ inputs.timestamp }}
+          name: aggregation-summary
           path: aggregation_summary.md 
